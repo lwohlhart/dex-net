@@ -32,6 +32,7 @@ import numpy as np
 import meshpy.mesh as mesh
 import meshpy.sdf as sdf
 import meshpy.stable_pose as stp
+import meshpy.hand_object_pose as hop
 
 from autolab_core import RigidTransform
 from perception import BinaryImage, ColorImage, DepthImage, ObjectRender, RenderMode
@@ -77,6 +78,32 @@ class Hdf5ObjectFactory(object):
         data.create_dataset(MESH_TRIANGLES_KEY, data=mesh.triangles)
         if mesh.normals is not None:
             data.create_dataset(MESH_NORMALS_KEY, data=mesh.normals)
+
+
+    @staticmethod
+    def hand_object_poses(data):
+        """ Read out a list of hand object poses """
+        # num_stable_poses = data.attrs[NUM_STP_KEY]
+        hand_object_poses = []
+        if data is None:
+            return hand_object_poses
+        for hop_key in list(data.keys()):
+            if POSE_KEY not in hop_key:
+                continue
+            p = 1.0 #data[hop_key].attrs[STABLE_POSE_PROB_KEY]
+            r = data[hop_key].attrs[HAND_OBJECT_POSE_ROT_KEY]
+            try:
+                x0 = data[hop_key].attrs[HAND_OBJECT_POSE_PT_KEY]
+            except:
+                x0 = np.zeros(3)
+            hp = data[hop_key].attrs[HAND_OBJECT_POSE_HAND_POSE_KEY]
+            if not HAND_OBJECT_POSE_HAND_MESH_KEY in data[hop_key].keys():
+                continue
+            hand_mesh = Hdf5ObjectFactory.mesh_3d(data[hop_key][HAND_OBJECT_POSE_HAND_MESH_KEY])
+            rendered_images = data[hop_key][RENDERED_IMAGES_KEY] if RENDERED_IMAGES_KEY in data[hop_key].keys() else None
+            hand_object_poses.append(hop.HandObjectPose(p, r, x0, hp, hand_mesh, rendered_images, hop_id=hop_key))
+        return hand_object_poses
+
 
     @staticmethod
     def stable_poses(data):

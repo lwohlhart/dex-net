@@ -100,7 +100,7 @@ class PointGrasp(Grasp):
     """
     __metaclass__ = ABCMeta
 
-    @abstractmethod
+    @abstractstatic
     def create_line_of_action(g, axis, width, obj, num_samples):
         """ Creates a line of action, or the points in space that the grasp traces out, from a point g in world coordinates on an object.
 
@@ -640,7 +640,10 @@ class ParallelJawPtGrasp3D(PointGrasp):
                 return abs(np.dot(normal, grasp_axis_rotated))
             return matrix_product
     
-        stable_pose_normal = stable_pose.r[2,:]
+        if isinstance(stable_pose, StablePose):
+            stable_pose_normal = stable_pose.r[2,:]
+        else:
+            stable_pose_normal = stable_pose.rotation[2,:]
         
         theta = _argmin(_get_matrix_product_x_axis(np.array([1,0,0]), np.dot(inv(self.unrotated_full_axis), stable_pose_normal)), 0, 2*np.pi, 1000)
         return theta
@@ -707,6 +710,29 @@ class ParallelJawPtGrasp3D(PointGrasp):
     
         theta = _argmax(_get_matrix_product_x_axis(np.array([1,0,0]), np.dot(inv(self.unrotated_full_axis), -table_normal)), 0, 2*np.pi, 64)        
         return theta
+
+    def _angle_aligned_approach_vector(self, approach_vector):
+        """
+        Returns the y-axis rotation angle that'd allow the current pose to align with the approach vector.
+        """
+        # project approach_vector to plane spanned by grasp axis as normal vector
+        approach_vector_in_grasp_plane = approach_vector - approach_vector.dot(self.axis) * self.axis
+        v_len = np.linalg.norm(approach_vector_in_grasp_plane)
+        if v_len == 0:
+            return 0
+        approach_vector_in_grasp_plane = approach_vector_in_grasp_plane / v_len
+        current_approach_vector = self.unrotated_full_axis[:,0]
+        approach_angle_delta = np.arccos(np.clip(current_approach_vector.dot(approach_vector_in_grasp_plane), -1, 1))
+        return approach_angle_delta * np.sign(np.cross(approach_vector_in_grasp_plane, current_approach_vector).dot(self.axis))
+
+    def align_approach_vector(self, approach_vector):
+        """
+        Returns a grasp with approach_angle set to be aligned with the approach vector.
+        """
+        theta = self._angle_aligned_approach_vector(approach_vector)
+        g_plus = deepcopy(self)
+        g_plus.approach_angle = theta
+        return g_plus
 
     def perpendicular_table(self, stable_pose):
         """
@@ -874,7 +900,7 @@ class VacuumPoint(Grasp):
 
     @property
     def frame(self):
-        return self._frame
+        return self.frame_
 
     @property
     def configuration(self):

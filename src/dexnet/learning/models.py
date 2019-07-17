@@ -303,12 +303,12 @@ class BetaBernoulliModel(DiscreteModel):
         if stop:
             IPython.embed()
         if vis:
-            print 'Samples'
-            print samples
-            print 'Estimated mean'
-            print BetaBernoulliModel.beta_mean(self.posterior_alphas_, self.posterior_betas_)
-            print 'At best index'
-            print BetaBernoulliModel.beta_mean(self.posterior_alphas_[21], self.posterior_betas_[21])
+            print ('Samples')
+            print (samples)
+            print ('Estimated mean')
+            print (BetaBernoulliModel.beta_mean(self.posterior_alphas_, self.posterior_betas_))
+            print ('At best index')
+            print (BetaBernoulliModel.beta_mean(self.posterior_alphas_[21], self.posterior_betas_[21]))
         return samples
 
 class GaussianModel(DiscreteModel):

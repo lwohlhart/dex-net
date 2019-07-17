@@ -70,6 +70,16 @@ STABLE_POSE_PROB_KEY = 'p'
 STABLE_POSE_ROT_KEY = 'r'
 STABLE_POSE_PT_KEY = 'x0'
 
+HAND_OBJECT_POSES_KEY = 'hand_object_poses'
+HAND_OBJECT_POSE_QUATERNION_KEY = 'q'
+HAND_OBJECT_POSE_ROT_KEY = 'r'
+HAND_OBJECT_POSE_PT_KEY = 'x0'
+HAND_OBJECT_POSE_HAND_POSE_KEY = 'hand_pose'
+HAND_OBJECT_POSE_HAND_MESH_KEY = 'hand_mesh'
+
+IMAGE_DEPTH_KEY = 'image_depth'
+IMAGE_SEGMENTATION_KEY = 'image_segmentation'
+
 NUM_GRASPS_KEY = 'num_grasps'
 GRASP_KEY = 'grasp'
 GRASP_ID_KEY = 'id'
@@ -92,6 +102,7 @@ CAM_POS_KEY = 'cam_pos'
 CAM_ROT_KEY = 'cam_rot'
 CAM_INT_PT_KEY = 'cam_int_pt'
 CAM_FRAME_KEY = 'cam_frame'
+CAM_INTRINSICS_KEY = 'cam_intrinsics'
 
 # Extras
 RENDERED_IMAGE_TYPES = ['segmask', 'depth', 'scaled_depth']

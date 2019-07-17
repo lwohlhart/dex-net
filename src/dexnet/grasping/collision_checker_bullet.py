@@ -20,36 +20,31 @@ HEREUNDER IS PROVIDED "AS IS". REGENTS HAS NO OBLIGATION TO PROVIDE
 MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 """
 """
-Collision checking using OpenRAVE
+Collision checking using PyBullet
 Author: Jeff Mahler
 """
 import logging
 import time
 import numpy as np
+import pybullet
 
-USE_OPENRAVE = True
-try:
-    import openravepy as rave
-except:
-    logging.warning('Failed to import OpenRAVE')
-    USE_OPENRAVE = False
-try:
-    import mayavi.mlab as mv
-except:
-    logging.warning('Failed to import mayavi')
+# try:
+#     import mayavi.mlab as mv
+# except:
+#     logging.warning('Failed to import mayavi')
 
 import IPython
 
 from autolab_core import RigidTransform
 
-class OpenRaveCollisionChecker(object):
-    """ Wrapper for collision checking with OpenRAVE
+class PyBulletCollisionChecker(object):
+    """ Wrapper for collision checking with PyBullet
     """
     env_ = None
 
     def __init__(self, env=None, view=False, win_height=1200, win_width=1200, cam_dist=0.5):
         """
-        Initialize an OpenRaveCollisionChecker
+        Initialize a PyBulletCollisionChecker
 
         Parameters
         ----------
@@ -64,33 +59,24 @@ class OpenRaveCollisionChecker(object):
         cam_dist : float
             distance of camera to view window
         """
-        if not USE_OPENRAVE:
-            raise ValueError('Cannot instantiate OpenRave collision checker')
 
-        if env is None and OpenRaveCollisionChecker.env_ is None:
-            OpenRaveCollisionChecker._setup_rave_env()
-            
         self._view = view
+
+        if env is None and PyBulletCollisionChecker.env_ is None:
+            PyBulletCollisionChecker._setup_pybullet_env(view)
+        pybullet.resetSimulation()
+            
         if self._view:
             self._init_viewer(win_height, win_width, cam_dist)
-            
+
         self._objs = {}
         self._objs_tf = {}
-        self.frame_handles = []
 
-    def draw_frame(self, T = np.eye(4), length=1, translate=True):
-        origin = T[:3,3]
-        if not translate:
-            origin = np.zeros(3)
-        self.frame_handles.append(self.env.drawarrow(p1=origin, p2=(origin + T[:3,0]*length), linewidth=0.01, color=np.array([1,0,0])))
-        self.frame_handles.append(self.env.drawarrow(p1=origin, p2=(origin + T[:3,1]*length), linewidth=0.01, color=np.array([0,1,0])))
-        self.frame_handles.append(self.env.drawarrow(p1=origin, p2=(origin + T[:3,2]*length), linewidth=0.01, color=np.array([0,0,1])))
-
-        return self.frame_handles
-
-    def clear_frames(self):
-        while self.frame_handles:
-            self.frame_handles.pop().Close()
+        self.collisionLineId = pybullet.addUserDebugLine(lineFromXYZ=[0, 0, 0],
+                            lineToXYZ=[0, 0, 0],
+                            lineColorRGB=[1,0,0],
+                            lineWidth=3,
+                            lifeTime=0)
         
     def remove_object(self, name):
         """ Remove an object from the collision checking environment.
@@ -102,7 +88,7 @@ class OpenRaveCollisionChecker(object):
         """
         if name not in self._objs:
             return
-        self.env.Remove(self._objs[name])
+        pybullet.removeBody(self._objs[name])
         self._objs.pop(name)
         self._objs_tf.pop(name)
         
@@ -112,21 +98,31 @@ class OpenRaveCollisionChecker(object):
         Parameters
         ----------
         name : :obj:`str`
-            name of object to remove
+            name of object to add
         filename : :obj:`str`
             filename of triangular mesh (e.g. .STL or .OBJ)
         T_world_obj : :obj:`autolab_core.RigidTransform`
             transformation from object to world frame
         """
         if name in self._objs:
-            self.env.Remove(self._objs[name])
-        self.env.Load(filename)
-        obj = self.env.GetBodies()[-1]
-        self._objs[name] = obj
-        
+            self.remove_object(name)
+        visualShapeId = pybullet.createVisualShape(shapeType=pybullet.GEOM_MESH, fileName=filename)
+        if name == 'gripper':
+            collisionShapeId = pybullet.createCollisionShape(shapeType=pybullet.GEOM_MESH, fileName=filename, flags=pybullet.GEOM_FORCE_CONCAVE_TRIMESH)
+        else:
+            collisionShapeId = pybullet.createCollisionShape(shapeType=pybullet.GEOM_MESH, fileName=filename)
+
         if T_world_obj is None:
             T_world_obj = RigidTransform(from_frame=name, to_frame='world')
-        self.set_transform(name, T_world_obj)
+
+        p = T_world_obj.position
+        q_xyzw = np.roll(T_world_obj.quaternion, -1)
+        mass = 0 # 1 * (name == 'gripper')
+        objID = pybullet.createMultiBody(baseMass=mass, baseCollisionShapeIndex=collisionShapeId, baseVisualShapeIndex=visualShapeId, 
+                                         basePosition=p, baseOrientation=q_xyzw)
+
+        self._objs[name] = objID
+        self._objs_tf[name] = T_world_obj.copy()
     
     def set_transform(self, name, T_world_obj):
         """ Set the pose of an object in the environment.
@@ -138,8 +134,9 @@ class OpenRaveCollisionChecker(object):
         T_world_obj : :obj:`autolab_core.RigidTransform`
             transformation from object to world frame
         """
-        T_world_obj_mat = OpenRaveCollisionChecker._tf_to_rave_mat(T_world_obj)
-        self._objs[name].SetTransform(T_world_obj_mat)
+        p = T_world_obj.position
+        q_xyzw = np.roll(T_world_obj.quaternion, -1)
+        pybullet.resetBasePositionAndOrientation(self._objs[name], p, q_xyzw)
         self._objs_tf[name] = T_world_obj.copy()
         
     def in_collision_single(self, target_name, names=None):
@@ -157,18 +154,99 @@ class OpenRaveCollisionChecker(object):
         bool
             True if a collision occurs, False otherwise
         """
-        if self._view and self.env.GetViewer() is None:
-            self.env.SetViewer('qtcoin')
     
         if names is None:
             names = self._objs.keys()
-            
+        
+        
+
+
+
+        ## experimental
+        import time
+        # grav = -0.001 * np.array(pybullet.getAxisAngleFromQuaternion(pybullet.getBasePositionAndOrientation(self._objs['table'])[1])[0])
+        o = pybullet.getBasePositionAndOrientation(self._objs['gripper'])[1]
+        g = np.dot(np.array(pybullet.getMatrixFromQuaternion(o)).reshape(3,3) , [0,0,1])
+        pybullet.setGravity(g[0], g[1], g[2])
+        target_obj = self._objs[target_name]
+        for other_name in names:
+            if other_name != 'table' and other_name != target_name:
+                other_obj = self._objs[other_name]
+                #for i in range(200):
+                pybullet.stepSimulation()
+                pts = pybullet.getClosestPoints(bodyA=other_obj, bodyB=target_obj, distance=100)
+                # closePts = pts
+                contactPts = pybullet.getContactPoints(bodyA=other_obj, bodyB=target_obj)
+                if len(contactPts) > 0:
+                    print(contactPts)
+                if len(pts) > 0:
+                    distance = pts[0][8]
+
+                    ptA = pts[0][5]
+                    ptB = pts[0][6]
+                    
+                    pybullet.addUserDebugLine(lineFromXYZ=ptA, lineToXYZ=ptB, lineColorRGB=[1,0,0], lineWidth=3, lifeTime=0, replaceItemUniqueId=self.collisionLineId)
+
+                    if distance <= 0:
+                        logging.debug('Collision between: {0} and {1}'.format(other_name, target_name))
+                        # return True    
+                else:
+                    pass
+                # time.sleep(1./100)
+                    # raise Exception("hmm...  somethings wrong")
+                # if self.env.CheckCollision(self._objs[other_name], target_obj): # HERE TODO getOverlappingObjects
+                #     logging.debug('Collision between: {0} and {1}'.format(other_name, target_name))
+                #     return True
+        
+
+
+
+        ## experimental
+        return False
+
+
+
+
+
+
+
+
+
+
+
         target_obj = self._objs[target_name]
         for other_name in names:
             if other_name != target_name:
-                if self.env.CheckCollision(self._objs[other_name], target_obj):
-                    logging.debug('Collision between: {0} and {1}'.format(other_name, target_name))
-                    return True
+                other_obj = self._objs[other_name]
+                
+                pybullet.stepSimulation()
+                pts = pybullet.getClosestPoints(bodyA=other_obj, bodyB=target_obj, distance=100)
+                # closePts = pts
+                contactPts = pybullet.getContactPoints(bodyA=other_obj, bodyB=target_obj)
+                if len(contactPts) > 0:
+                    print(contactPts)
+                if len(pts) > 0:
+                    distance = pts[0][8]
+
+                    ptA = pts[0][5]
+                    ptB = pts[0][6]
+                    if other_name != 'table':
+                        pybullet.addUserDebugLine(lineFromXYZ=ptA,
+                                    lineToXYZ=ptB,
+                                    lineColorRGB=[1,0,0],
+                                    lineWidth=3,
+                                    lifeTime=0,
+                                    replaceItemUniqueId=self.collisionLineId)
+
+                    if distance <= 0:
+                        logging.debug('Collision between: {0} and {1}'.format(other_name, target_name))
+                        # return True    
+                else:
+                    pass
+                    # raise Exception("hmm...  somethings wrong")
+                # if self.env.CheckCollision(self._objs[other_name], target_obj): # HERE TODO getOverlappingObjects
+                #     logging.debug('Collision between: {0} and {1}'.format(other_name, target_name))
+                #     return True
         
         return False
 
@@ -185,8 +263,6 @@ class OpenRaveCollisionChecker(object):
         bool
             True if a collision occurs, False otherwise
         """
-        if self._view and self.env.GetViewer() is None:
-            self.env.SetViewer('qtcoin')
     
         if names is None:
             names = self._objs.keys()
@@ -194,65 +270,73 @@ class OpenRaveCollisionChecker(object):
         for name1 in names:
             for name2 in names:
                 if name1 != name2:
-                    if self.env.CheckCollision(self._objs[name1], self._objs[name2]):
-                        logging.debug('Collision between: {0} and {1}'.format(name1, name2))
-                        return True
+                    other_obj = self._objs[other_name]
+                    pts = pybullet.getClosestPoints(bodyA=other_obj, bodyB=target_obj, distance=100)
+                    if len(pts) > 0:
+                        distance = pts[0][8]
+                        if distance <= 0:
+                            logging.debug('Collision between: {0} and {1}'.format(other_name, target_name))
+                            return True
+                    # if self.env.CheckCollision(self._objs[name1], self._objs[name2]): # HERE TODO getOverlappingObjects
+                    #     logging.debug('Collision between: {0} and {1}'.format(name1, name2))
+                    #     return True
         
         return False
         
-    @staticmethod
-    def _tf_to_rave_mat(tf):
-        """ Convert a RigidTransform to an OpenRAVE matrix """
-        position = tf.position
-        orientation = tf.quaternion
-        pose = np.array([orientation[0], orientation[1], orientation[2], orientation[3], 
-                         position[0], position[1], position[2]])
-        mat = rave.matrixFromPose(pose)
-        return mat
+    # @staticmethod
+    # def _tf_to_rave_mat(tf):
+    #     """ Convert a RigidTransform to an OpenRAVE matrix """
+    #     position = tf.position
+    #     orientation = tf.quaternion
+    #     pose = np.array([orientation[0], orientation[1], orientation[2], orientation[3], 
+    #                      position[0], position[1], position[2]])
+    #     mat = rave.matrixFromPose(pose)
+    #     return mat
         
     def __del__(self):
-        for obj in self._objs.values():
-            self.env.Remove(obj)
+        pass
+        # for obj in self._objs.values():
+        #     pybullet.removeBody(obj)
+            # self.env.Remove(obj) # HERE TODO removeBody
+        
+        # pybullet.resetSimulation()
+        # try:
+        #     pybullet.disconnect(physicsClientId=self.env)
+        # except pybullet.error:
+        #     pass
             
     @property
     def env(self):
-        if OpenRaveCollisionChecker.env_ is None:
-            OpenRaveCollisionChecker._setup_rave_env()
-        return OpenRaveCollisionChecker.env_
+        if PyBulletCollisionChecker.env_ is None:
+            PyBulletCollisionChecker._setup_pybullet_env(self._view)
+        return PyBulletCollisionChecker.env_
         
-    def set_view(self, view):
-        self._view = view
+    # def set_view(self, view):
+    #     self._view = view
 
     @staticmethod
-    def _setup_rave_env():
-        """ OpenRave environment """
-        OpenRaveCollisionChecker.env_ = rave.Environment()
-        
-    def set_camera(self, T, distance):
-        if self._view:
-            self.env.GetViewer().SetCamera(T, distance)
+    def _setup_pybullet_env(view=False):
+        """ PyBullet environment """
+        pybullet_connection = pybullet.GUI if view else pybullet.DIRECT
+        PyBulletCollisionChecker.env_ = pybullet.connect(pybullet_connection)
+        pybullet.resetSimulation()
+    
+    def close(self):
+        pybullet.resetSimulation()
+        try:
+            pybullet.disconnect(physicsClientId=self.env)
+        except pybullet.error:
+            pass
+
 
     def _init_viewer(self, height, width, cam_dist):
-        """ Initialize the OpenRave viewer """
-        # set OR viewer
-        OpenRaveCollisionChecker.env_.SetViewer("qtcoin")
-        viewer = self.env.GetViewer()
-        viewer.SetSize(width, height)
+        """ configure the pybullet viewer """
+        pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_GUI, 0)
+        pybullet.resetDebugVisualizerCamera(cameraDistance=cam_dist, cameraYaw=-90, cameraPitch=0, cameraTargetPosition=[0,0,0])
 
-        T_cam_obj = np.eye(4)
-        R_cam_obj = np.array([[0,  0, 1],
-                              [-1, 0, 0],
-                              [0, -1, 0]])
-        T_cam_obj[:3,:3] = R_cam_obj
-        T_cam_obj[0,3] = -cam_dist
-        self.T_cam_obj_ = T_cam_obj
+    
 
-        # set view based on object
-        self.T_obj_world_ = np.eye(4)
-        self.T_cam_world_ = self.T_obj_world_.dot(self.T_cam_obj_)
-        viewer.SetCamera(self.T_cam_world_, cam_dist)
-
-class GraspCollisionChecker(OpenRaveCollisionChecker):
+class PyBulletGraspCollisionChecker(PyBulletCollisionChecker):
     """ Collision checker that automatcially handles grasp objects.
     """
     def __init__(self, gripper, env=None, view=False, win_height=1200, win_width=1200, cam_dist=0.5):
@@ -274,7 +358,7 @@ class GraspCollisionChecker(OpenRaveCollisionChecker):
         cam_dist : float
             distance of camera to view window
         """
-        OpenRaveCollisionChecker.__init__(self, env, view, win_height, win_width, cam_dist)
+        PyBulletCollisionChecker.__init__(self, env, view, win_height, win_width, cam_dist)
         self._gripper = gripper
         self.set_object('gripper', self._gripper.mesh_filename)
 
@@ -312,6 +396,18 @@ class GraspCollisionChecker(OpenRaveCollisionChecker):
             the transformation from obj to world frame
         """
         self.set_object(graspable.key, graspable.model_name, T_obj_world)
+
+    def set_collision_object(self, name, filename, T_collision_object_world):
+        """ Set the collision object geometry and position in the environment.
+
+        Parameters
+        ----------
+        filename : :obj:`str`
+            name of collision object mesh file (e.g. .STL or .OBJ)
+        T_collision_object_world : :obj:`autolab_core.RigidTransform`
+            pose of collision object w.r.t. world
+        """
+        self.set_object('table', filename, T_table_world)
 
     def set_table(self, filename, T_table_world):
         """ Set the table geometry and position in the environment.

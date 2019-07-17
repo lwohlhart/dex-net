@@ -638,7 +638,7 @@ class DexNet(object):
         stable_poses = self.dataset.stable_poses(object_name)
 
         for stable_pose in stable_poses:
-            print 'Stable pose %s with p=%.3f' %(stable_pose.id, stable_pose.p)
+            print ('Stable pose %s with p=%.3f' %(stable_pose.id, stable_pose.p))
             vis.figure()
             vis.mesh_stable_pose(obj.mesh.trimesh, stable_pose.T_obj_world,
                                  color=(0.5, 0.5, 0.5), style='surface')
@@ -714,7 +714,7 @@ class DexNet(object):
                 if metric <= config['min_metric']:
                     continue                 
 
-                print 'Grasp %d %s=%.5f' %(grasp.id, metric_name, metric)
+                print ('Grasp %d %s=%.5f' %(grasp.id, metric_name, metric))
                 T_obj_world = RigidTransform(from_frame='obj',
                                              to_frame='world')
                 color = plt.get_cmap('hsv')(q_to_c(metric))[:-1]
@@ -737,7 +737,7 @@ class DexNet(object):
                 if metric <= config['min_metric']:
                     continue                 
 
-                print 'Grasp %d %s=%.5f' %(grasp.id, metric_name, metric)
+                print ('Grasp %d %s=%.5f' %(grasp.id, metric_name, metric))
                 T_obj_world = RigidTransform(from_frame='obj',
                                              to_frame='world')
                 color = plt.get_cmap('hsv')(q_to_c(metric))[:-1]

@@ -255,6 +255,10 @@ class Hdf5Dataset(Dataset):
     def name(self):
         """ :obj:`str` : Name of the dataset """
         return self.dataset_name_
+    
+    @property
+    def cache_dir(self):
+        return self.cache_dir_
 
     @property
     def objects(self):
@@ -326,6 +330,13 @@ class Hdf5Dataset(Dataset):
         if gripper:
             return self.objects[key][GRASPS_KEY][gripper]
         return self.objects[key][GRASPS_KEY]
+
+    def hand_object_pose_data(self, key, hand_object_pose_id=None):
+        if HAND_OBJECT_POSES_KEY not in self.objects[key].keys():
+            return None
+        if hand_object_pose_id is not None:
+            return self.objects[key][HAND_OBJECT_POSES_KEY][hand_object_pose_id]
+        return self.objects[key][HAND_OBJECT_POSES_KEY]
 
     def stable_pose_data(self, key, stable_pose_id=None):
         if stable_pose_id is not None:
@@ -1093,6 +1104,31 @@ class Hdf5Dataset(Dataset):
             if stp.p > min_p:
                 stp_list.append(stp)
         return stp_list
+
+    # stable pose data
+    def hand_object_poses(self, key, min_p=0.0): # TODO doc
+        """ Stable poses for object key.
+
+        Parameters
+        ----------
+        key : :obj:`str`
+            key of object
+        min_p : float
+            min stable pose probability to return
+
+        Returns
+        -------
+        :obj:`list` of :obj:`StablePose`
+            list of stable poses for the given object
+        """
+        hops = Hdf5ObjectFactory.hand_object_poses(self.hand_object_pose_data(key))
+
+        # prune low probability stable poses
+        hop_list = []
+        for hop in hops:
+            if hop.p > min_p:
+                hop_list.append(hop)
+        return hop_list
 
     def stable_pose(self, key, stable_pose_id):
         """ Stable pose of stable pose id for object key

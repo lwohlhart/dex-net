@@ -32,8 +32,11 @@ from grasp_quality_function import GraspQualityResult, GraspQualityFunction, Qua
 try:
     from collision_checker import OpenRaveCollisionChecker, GraspCollisionChecker
 except Exception:
-    print 'Unable to import OpenRaveCollisionChecker and GraspCollisionChecker! Likely due to missing OpenRave dependency.'
-    print 'Install OpenRave 0.9 from source if required. Instructions can be found at http://openrave.org/docs/latest_stable/coreapihtml/installation_linux.html'
+    print ('Unable to import OpenRaveCollisionChecker and GraspCollisionChecker! Likely due to missing OpenRave dependency.')
+    print ('Install OpenRave 0.9 from source if required. Instructions can be found at http://openrave.org/docs/latest_stable/coreapihtml/installation_linux.html')
+
+from collision_checker_bullet import PyBulletGraspCollisionChecker
+
 
 from grasp_sampler import GraspSampler, UniformGraspSampler, GaussianGraspSampler, AntipodalGraspSampler
 
