@@ -36,6 +36,7 @@ import mathutils as mu
 import argparse
 import os
 import sys
+from collections import namedtuple
 
 blender_dir = os.path.dirname(bpy.data.filepath)
 bpy.context.user_preferences.view.show_splash = False
@@ -160,6 +161,37 @@ def enumerate_hand_poses(scene, context):
     items = [(p, p.split('/')[-1], '') for i, p in enumerate(hand_pose_paths)]
     return items
 
+HandObjectConfiguration = namedtuple('HandObjectConfiguration', [
+    oaho_db.HAND_OBJECT_POSE_PT_KEY, 
+    oaho_db.HAND_OBJECT_POSE_ROT_KEY,
+    oaho_db.HAND_OBJECT_POSE_QUATERNION_KEY,
+    oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY
+    ])
+cached_hand_object_configurations = {}
+
+def cache_hand_object_configuration(hop_key, hand_object_pose):
+    cached_hand_object_configurations[hop_key] = HandObjectConfiguration(
+        hand_object_pose.attrs[oaho_db.HAND_OBJECT_POSE_PT_KEY],
+        hand_object_pose.attrs[oaho_db.HAND_OBJECT_POSE_ROT_KEY],
+        hand_object_pose.attrs[oaho_db.HAND_OBJECT_POSE_QUATERNION_KEY],
+        hand_object_pose.attrs[oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY]
+    )
+def enumerate_cached_hand_object_configurations(scene, context):
+    return [(hoc, hoc, '') for hoc in sorted(cached_hand_object_configurations.keys())]
+
+
+def set_cached_hand_object_configuration(self, context):
+    if self.cached_hand_object_configuration and self.current_object_name and current_object is not None \
+        and cached_hand_object_configurations[self.cached_hand_object_configuration] is not None:
+        hoc = cached_hand_object_configurations[self.cached_hand_object_configuration]._asdict()
+    
+        q = hoc[oaho_db.HAND_OBJECT_POSE_QUATERNION_KEY]        
+        current_object.location = hoc[oaho_db.HAND_OBJECT_POSE_PT_KEY]
+        current_object.rotation_mode = 'QUATERNION'
+        current_object.rotation_quaternion = q
+        oaho_scene.setHandPoseQuat(hoc[oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY])
+
+
 class SetNextHandPoseMacro(bpy.types.Operator):
     """set next Hand Pose Macro"""
     bl_idname = 'object.set_next_hand_pose'
@@ -250,6 +282,7 @@ class StoreHandObjectConfigurationMacro(bpy.types.Operator):
         hand_object_poses[pose_key].attrs.create(oaho_db.HAND_OBJECT_POSE_QUATERNION_KEY, current_object.rotation_quaternion) # actually also store quaternion
         hand_object_poses[pose_key].attrs.create(oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY, oaho_scene.getHandPoseQuat())
         # hand_object_poses[pose_key].attrs.create(oaho_db.HAND_OBJECT_POSE_ROT_KEY, rot_matrix)
+        cache_hand_object_configuration('{}_{}'.format(context.scene.current_object_name, pose_key), hand_object_poses[pose_key])
 
         self.report({'INFO'}, 'stored hand_object pose {}, x0:{}, q:{}, hand_pose:{}'.format(pose_key, 
             hand_object_poses[pose_key].attrs[oaho_db.HAND_OBJECT_POSE_PT_KEY],
@@ -351,6 +384,7 @@ class SetNextHandObjectConfigurationMacro(bpy.types.Operator):
                 current_object.rotation_quaternion = q
                 oaho_scene.setHandPoseQuat(pose.attrs[oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY])
                 self.report({'INFO'}, 'hand_object pose is idx:{}, {}'.format(hand_object_configuration_index, poses[hand_object_configuration_index]))
+                cache_hand_object_configuration('{}_{}'.format(context.scene.current_object_name, poses[hand_object_configuration_index]), pose)
             else:
                 return {'CANCELLED'}
 
@@ -394,6 +428,8 @@ bpy.types.Scene.base_hand_pose = bpy.props.EnumProperty(name='Base Hand Pose', i
 bpy.types.Scene.current_object_name = bpy.props.EnumProperty(name='DB Object', items=enumerate_database_object_names, update=set_current_object)
 bpy.types.Scene.visualize_grasps = bpy.props.BoolProperty(name='Visualize Grasps', default=False, update=set_visualize_grasps)
 
+bpy.types.Scene.cached_hand_object_configuration = bpy.props.EnumProperty(name='Cached H-O configuration', items=enumerate_cached_hand_object_configurations, update=set_cached_hand_object_configuration)
+
 
 
 class BaseHandPosePanel(bpy.types.Panel):
@@ -418,6 +454,7 @@ class BaseHandPosePanel(bpy.types.Panel):
         row.operator('object.set_next_grasp_object', text='Next Object', icon='OBJECT_DATA')
         col.prop(scene, 'visualize_grasps')
 
+        col.prop(scene, 'cached_hand_object_configuration')
         # bl_idname = 'object.store_hand_object_configuration'
         # bl_idname = 'object.delete_current_hand_object_configuration'
         # bl_idname = 'object.set_next_hand_object_configuration'
