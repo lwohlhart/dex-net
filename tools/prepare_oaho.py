@@ -133,6 +133,31 @@ bl_info = {
     'category': 'Object',
 }
 
+class RandomizeOAHOCamera(bpy.types.Operator):
+    bl_idname = 'object.randomize_oaho_camera'
+    bl_label = 'Randomize OAHO Camera Pose?'
+
+    def execute(self, context):
+        oaho_scene.positionCamera()
+        return { 'FINISHED' }
+
+class WriteArmPoseMacro(bpy.types.Operator):
+    """Write Arm Pose Macro"""
+    bl_idname = 'object.write_arm_pose'
+    bl_label = 'Store Current Arm Pose?'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        print('write current arm pose')
+        oaho_scene.writeArmPoseQuat(pose_dir)
+        arm_pose_paths = get_arm_poses()
+        current_arm_pose_index = len(arm_pose_paths)-1
+        self.report({'INFO'}, 'arm pose is idx:{}, {}'.format(current_arm_pose_index, arm_pose_paths[current_arm_pose_index]))
+        return {'FINISHED'}
+
 class WriteHandPoseMacro(bpy.types.Operator):
     """Write Hand Pose Macro"""
     bl_idname = 'object.write_hand_pose'
@@ -160,6 +185,24 @@ def enumerate_hand_poses(scene, context):
     hand_pose_paths = get_hand_poses()
     items = [(p, p.split('/')[-1], '') for i, p in enumerate(hand_pose_paths)]
     return items
+
+def get_arm_poses():
+    # hp = list(glob(os.path.join(pose_dir, 'arm_pose*csv')))
+    hp = list(glob(os.path.join(pose_dir, 'body_pose*csv')))
+    hp = sorted(hp, key=os.path.basename)
+    return hp
+
+def enumerate_arm_poses(scene, context):
+    arm_pose_paths = get_arm_poses()
+    items = [(p, p.split('/')[-1], '') for i, p in enumerate(arm_pose_paths)]
+    return items
+
+def set_base_arm_pose(self, context):
+    arm_poses = oaho_scene.loadPoses([self.base_arm_pose])
+    if len(arm_poses) > 0:
+        # oaho_scene.setArmPoseQuat(arm_poses[0])   
+        oaho_scene.setBodyPoseQuat(arm_poses[0])   
+
 
 HandObjectConfiguration = namedtuple('HandObjectConfiguration', [
     oaho_db.HAND_OBJECT_POSE_PT_KEY, 
@@ -191,6 +234,33 @@ def set_cached_hand_object_configuration(self, context):
         current_object.rotation_quaternion = q
         oaho_scene.setHandPoseQuat(hoc[oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY])
 
+
+class SetNextArmPoseMacro(bpy.types.Operator):
+    """set next Arm Pose Macro"""
+    bl_idname = 'object.set_next_arm_pose'
+    bl_label = 'set next Arm Pose Macro'
+    bl_options = {'REGISTER', 'UNDO'}
+    index_delta = bpy.props.IntProperty(default=1)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+    
+
+    def invoke(self, context, event):
+        self.index_delta = -1 if event.shift else 1
+        return self.execute(context)
+
+    def execute(self, context):
+        arm_pose_paths = get_arm_poses()
+        if len(arm_pose_paths) > 0:
+            if context.scene.base_arm_pose and context.scene.base_arm_pose in arm_pose_paths:
+                current_arm_pose_index = (arm_pose_paths.index(context.scene.base_arm_pose) + self.index_delta) % len(arm_pose_paths)
+            else:
+                current_arm_pose_index = 0
+            context.scene.base_arm_pose = arm_pose_paths[current_arm_pose_index]
+        else:
+            return {'CANCELLED'}
+        return {'FINISHED'}
 
 class SetNextHandPoseMacro(bpy.types.Operator):
     """set next Hand Pose Macro"""
@@ -424,6 +494,7 @@ def set_visualize_grasps(self, context):
 
 
 
+bpy.types.Scene.base_arm_pose = bpy.props.EnumProperty(name='Base Arm Pose', items=enumerate_arm_poses, update=set_base_arm_pose)
 bpy.types.Scene.base_hand_pose = bpy.props.EnumProperty(name='Base Hand Pose', items=enumerate_hand_poses, update=set_base_hand_pose)
 bpy.types.Scene.current_object_name = bpy.props.EnumProperty(name='DB Object', items=enumerate_database_object_names, update=set_current_object)
 bpy.types.Scene.visualize_grasps = bpy.props.BoolProperty(name='Visualize Grasps', default=False, update=set_visualize_grasps)
@@ -432,10 +503,10 @@ bpy.types.Scene.cached_hand_object_configuration = bpy.props.EnumProperty(name='
 
 
 
-class BaseHandPosePanel(bpy.types.Panel):
-    """Panel to select a base hand pose"""
-    bl_label = 'BaseHandPose Panel'
-    bl_idname = 'OBJECT_PT_BaseHandPosePanel'
+class OAHOPanel(bpy.types.Panel):
+    """Panel to inspect and modify OAHO configurations"""
+    bl_label = 'OAHO Panel'
+    bl_idname = 'OBJECT_PT_OAHOPanel'
     bl_space_type = 'PROPERTIES'
     bl_region_type = 'WINDOW'
     bl_context = 'object'
@@ -444,9 +515,14 @@ class BaseHandPosePanel(bpy.types.Panel):
         scene = context.scene
         layout = self.layout
         col = layout.column()
+
+        col.prop(scene, 'base_arm_pose')
+        col.operator('object.set_next_arm_pose', text='Next Arm Pose', icon='HAND')
+        col.operator('object.write_arm_pose', text='Store Arm Pose', icon='PLUS')
+
         col.prop(scene, 'base_hand_pose')
         col.operator('object.set_next_hand_pose', text='Next Hand Pose', icon='HAND')
-        col.operator('object.write_hand_pose', text='Store Hand Pose', icon='HAND')
+        col.operator('object.write_hand_pose', text='Store Hand Pose', icon='PLUS')
         
         col.prop(scene, 'current_object_name')
         row = col.row()
@@ -455,6 +531,8 @@ class BaseHandPosePanel(bpy.types.Panel):
         col.prop(scene, 'visualize_grasps')
 
         col.prop(scene, 'cached_hand_object_configuration')
+
+        col.operator('object.randomize_oaho_camera', text='Random OHAO view', icon='NONE')
         # bl_idname = 'object.store_hand_object_configuration'
         # bl_idname = 'object.delete_current_hand_object_configuration'
         # bl_idname = 'object.set_next_hand_object_configuration'
@@ -468,6 +546,12 @@ addon_keymaps = []
 def register():
     wm = bpy.context.window_manager
 
+
+    bpy.utils.register_class(RandomizeOAHOCamera)
+
+    bpy.utils.register_class(WriteArmPoseMacro)
+    bpy.utils.register_class(SetNextArmPoseMacro)
+
     bpy.utils.register_class(WriteHandPoseMacro)
     bpy.utils.register_class(SetNextHandPoseMacro)
     bpy.utils.register_class(SetNextGraspObjectMacro)
@@ -475,11 +559,15 @@ def register():
     bpy.utils.register_class(SetNextHandObjectConfigurationMacro)
     bpy.utils.register_class(DeleteHandObjectConfigurationMacro)
 
-    bpy.utils.register_class(BaseHandPosePanel)
+    bpy.utils.register_class(OAHOPanel)
     
     
     # handle the keymap
     km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
+    kmi = km.keymap_items.new(WriteArmPoseMacro.bl_idname, 'NUMPAD_1', 'PRESS', ctrl=True, shift=False)
+    kmi = km.keymap_items.new(SetNextArmPoseMacro.bl_idname, 'NUMPAD_1', 'PRESS', shift=False)
+    kmi = km.keymap_items.new(SetNextArmPoseMacro.bl_idname, 'NUMPAD_1', 'PRESS', shift=True)
+
     kmi = km.keymap_items.new(WriteHandPoseMacro.bl_idname, 'NUMPAD_0', 'PRESS', ctrl=True, shift=False)
     kmi = km.keymap_items.new(SetNextHandPoseMacro.bl_idname, 'NUMPAD_0', 'PRESS', shift=False)
     kmi = km.keymap_items.new(SetNextHandPoseMacro.bl_idname, 'NUMPAD_0', 'PRESS', shift=True)
