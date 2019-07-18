@@ -1,7 +1,11 @@
 # Dex-Net ignores
+dexnet-env
+data/oaho/*
 data/db/*
 *.dexnet
 *.hdf5
+data/database_direct_link.md5
+
 src/dex_net.egg-info/
 
 # Byte-compiled / optimized / DLL files
