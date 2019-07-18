@@ -50,8 +50,8 @@ bpy.context.user_preferences.view.show_splash = False
 
 # std imports
 
-DATASET_NAME = '3dnet'
-#DATASET_NAME = 'kit'
+#DATASET_NAME = '3dnet'
+DATASET_NAME = 'kit'
 
 sys.path.append(os.path.join(blender_dir,  'src'))
 
@@ -60,7 +60,7 @@ import oaho.scene as oaho_scene
 import oaho.constants as oaho_constants
 
 
-def generate_oaho_(mesh_name, data_dir, pose_dir, object_database):
+def generate_oaho_(mesh_name, data_dir, pose_dir, object_database, distractor_objects):
     
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
@@ -76,7 +76,7 @@ def generate_oaho_(mesh_name, data_dir, pose_dir, object_database):
     scales = oaho_scene.loadPoses(scale_paths)
     arm_poses = oaho_scene.loadPoses(arm_pose_paths)
     hand_poses = oaho_scene.loadPoses(hand_pose_paths)
-
+    # arm_poses.extend(arm_poses)
     # arm_poses = interpolatePoses(arm_poses, arm_interpolation_steps, rand1IdxPairs)
     # hand_poses = interpolatePoses(hand_poses, hand_interpolation_steps, rand2IdxPairs)
 
@@ -123,6 +123,8 @@ def generate_oaho_(mesh_name, data_dir, pose_dir, object_database):
                 current_object.rotation_mode = 'QUATERNION'
                 current_object.rotation_quaternion = q
                 oaho_scene.setHandPoseQuat(pose.attrs[oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY])
+                
+                oaho_scene.randomizeScene(distractor_objects)
 
                 # prepare hdf5 dataset structure
                 _, hand_vertices, hand_triangles = oaho_scene.get_hand_pose(mesh_name)
@@ -143,87 +145,90 @@ def generate_oaho_(mesh_name, data_dir, pose_dir, object_database):
 
                 rendered_images = pose[oaho_db.RENDERED_IMAGES_KEY]
 
-                for arm_pose in arm_poses:
-                    oaho_scene.setArmPoseQuat(arm_pose)
-                    oaho_scene.positionCamera()
-                    image_id = '{}_{}'.format(oaho_db.IMAGE_KEY, len(list(rendered_images.keys())))
+                for arm_pose_iter in range(2):
+                    for arm_pose in arm_poses:
+                        oaho_scene.setArmPoseQuat(arm_pose)
+                        oaho_scene.positionCamera()
+                        image_id = '{}_{}'.format(oaho_db.IMAGE_KEY, len(list(rendered_images.keys())))
 
-                    out_dir = os.path.join(data_dir, 'clean')
-                    if not os.path.exists(out_dir):
-                        os.makedirs(out_dir)
+                        out_dir = os.path.join(data_dir, 'clean')
+                        if not os.path.exists(out_dir):
+                            os.makedirs(out_dir)
 
-                    # define output paths
-                    ts = oaho_scene.getTs()
-                    depth_path = os.path.join(
-                        out_dir, '%08d_%s_depth_' % (img_idx, ts))
-                    rgb_path = os.path.join(
-                        out_dir, '%08d_%s_rgb_' % (img_idx, ts))
-                    anno3d_path = os.path.join(
-                        out_dir, '%08d_%s_anno_blender.txt' % (img_idx, ts))
+                        # define output paths
+                        ts = oaho_scene.getTs()
+                        depth_path = os.path.join(
+                            out_dir, '%08d_%s_depth_' % (img_idx, ts))
+                        rgb_path = os.path.join(
+                            out_dir, '%08d_%s_rgb_' % (img_idx, ts))
+                        anno3d_path = os.path.join(
+                            out_dir, '%08d_%s_anno_blender.txt' % (img_idx, ts))
 
-                    # create imgs
-                    oaho_scene.render(depth_path, rgb_path)
+                        # create imgs
+                        oaho_scene.render(depth_path, rgb_path)
 
-                    # compute anno
-                    anno3d, hand_vertices, hand_triangles = oaho_scene.get_hand_pose(mesh_name)
-                    anno3d[2, :] *= 1000  # to mm
-                    # save anno
-                    anno3d = anno3d.T.reshape(1, np.prod(anno3d.shape))
-                    np.savetxt(anno3d_path, anno3d, delimiter=' ', fmt='%.4f')
-                    
-                    depth_path += '0001.exr'
-                    rgb_path += '0001.png'
+                        # compute anno
+                        anno3d, hand_vertices, hand_triangles = oaho_scene.get_hand_pose(mesh_name)
+                        anno3d[2, :] *= 1000  # to mm
+                        # save anno
+                        anno3d = anno3d.T.reshape(1, np.prod(anno3d.shape))
+                        np.savetxt(anno3d_path, anno3d, delimiter=' ', fmt='%.4f')
+                        
+                        depth_path += '0001.exr'
+                        rgb_path += '0001.png'
 
-                    # depth_image = pyexr.read(depth_path)
-                    depth_image = cv2.imread(depth_path, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
+                        # depth_image = pyexr.read(depth_path)
+                        depth_image = cv2.imread(depth_path, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
 
-                    segmentation_image = cv2.imread(rgb_path)
-                    segmentation_image = cv2.cvtColor(segmentation_image, cv2.COLOR_BGR2RGB)
+                        segmentation_image = cv2.imread(rgb_path)
+                        segmentation_image = cv2.cvtColor(segmentation_image, cv2.COLOR_BGR2RGB)
 
-                    transform_cam_to_obj =  current_object.matrix_world.inverted() * camera.matrix_world
-                    pos_cam_to_obj, rot_quat_cam_to_obj, _ = transform_cam_to_obj.decompose()
-                    
-                    rendered_images.create_group(image_id)
-                    image_data = rendered_images[image_id]
+                        transform_cam_to_obj =  current_object.matrix_world.inverted() * camera.matrix_world
+                        pos_cam_to_obj, rot_quat_cam_to_obj, _ = transform_cam_to_obj.decompose()
+                        
+                        rendered_images.create_group(image_id)
+                        image_data = rendered_images[image_id]
 
-                    image_data.create_dataset(oaho_db.IMAGE_DEPTH_KEY, data=depth_image[:,:,0])
-                    image_data.create_dataset(oaho_db.IMAGE_SEGMENTATION_KEY, data=segmentation_image)
-                    image_data.attrs.create(oaho_db.IMAGE_FRAME_KEY, np.string_('image'))
-                    image_data.attrs.create(oaho_db.CAM_ROT_KEY, rot_quat_cam_to_obj.to_matrix())
-                    image_data.attrs.create(oaho_db.CAM_POS_KEY, pos_cam_to_obj)
-                    image_data.attrs.create(oaho_db.CAM_FRAME_KEY, np.string_('camera'))
-                    image_data.attrs.create(oaho_db.CAM_INTRINSICS_KEY, np.array(oaho_scene.getIntrinsics()))
+                        image_data.create_dataset(oaho_db.IMAGE_DEPTH_KEY, data=depth_image[:,:,0])
+                        image_data.create_dataset(oaho_db.IMAGE_SEGMENTATION_KEY, data=segmentation_image)
+                        image_data.attrs.create(oaho_db.IMAGE_TIMESTAMP_KEY, np.string_(ts))
+                        image_data.attrs.create(oaho_db.IMAGE_FRAME_KEY, np.string_('image'))
+                        image_data.attrs.create(oaho_db.CAM_ROT_KEY, rot_quat_cam_to_obj.to_matrix())
+                        image_data.attrs.create(oaho_db.CAM_POS_KEY, pos_cam_to_obj)
+                        image_data.attrs.create(oaho_db.CAM_FRAME_KEY, np.string_('camera'))
+                        image_data.attrs.create(oaho_db.CAM_INTRINSICS_KEY, np.array(oaho_scene.getIntrinsics()))
+                        
 
-                    # image_data.attrs.create(HAND_POSE_KEY, anno3d)
+                        # image_data.attrs.create(HAND_POSE_KEY, anno3d)
 
 
-                    # print(hand_vertices)
-                    # print(hand_triangles)
-                    # t = ''
-                    # for hv in hand_vertices:
-                    #     t += 'v {:4f} {:4f} {:4f}\n'.format(hv[0], hv[1], hv[2])
-                    # for ht in hand_triangles:
-                    #     t += 'f {} {} {}\n'.format(ht[0]+1, ht[1]+1, ht[2]+1)                    
-                    # with open(os.path.join(out_dir, '%08d_%s_hand.obj' % (img_idx, ts)), 'w+') as f:
-                    #     f.write(t)
-                    # return
+                        # print(hand_vertices)
+                        # print(hand_triangles)
+                        # t = ''
+                        # for hv in hand_vertices:
+                        #     t += 'v {:4f} {:4f} {:4f}\n'.format(hv[0], hv[1], hv[2])
+                        # for ht in hand_triangles:
+                        #     t += 'f {} {} {}\n'.format(ht[0]+1, ht[1]+1, ht[2]+1)                    
+                        # with open(os.path.join(out_dir, '%08d_%s_hand.obj' % (img_idx, ts)), 'w+') as f:
+                        #     f.write(t)
+                        # return
 
-                    # save anno constraint for first img
-                    if img_idx == 0:
-                        np.savetxt(os.path.join(
-                            out_dir, 'anno_constraint.txt'), anno3d, delimiter=' ', fmt='%.4f')
+                        # save anno constraint for first img
+                        if img_idx == 0:
+                            np.savetxt(os.path.join(
+                                out_dir, 'anno_constraint.txt'), anno3d, delimiter=' ', fmt='%.4f')
 
-                    img_idx += 1
+                        img_idx += 1
 
-                    # fps / remaining time
-                    fps = float(img_idx) / (time.time() - start_time)
+                        # fps / remaining time
+                        fps = float(img_idx) / (time.time() - start_time)
 
-                    n_images_left = n_images - img_idx
-                    remaining_time_min = n_images_left / fps / 60
-                    remaining_time_h = math.floor(remaining_time_min / 60)
-                    remaining_time_min = remaining_time_min - remaining_time_h * 60
-                    print('fps = %f | remaining: %d:%f' %
-                        (fps, remaining_time_h, remaining_time_min))
+                        n_images_left = n_images - img_idx
+                        remaining_time_min = n_images_left / fps / 60
+                        remaining_time_h = math.floor(remaining_time_min / 60)
+                        remaining_time_min = remaining_time_min - remaining_time_h * 60
+                        print('fps = %f | remaining: %d:%f' %
+                            (fps, remaining_time_h, remaining_time_min))
         # cleanup current object
         if current_object is not None:
             oaho_scene.remove_object(current_object)
@@ -252,11 +257,14 @@ def generate_oaho(data_dir, mhx_dir, pose_dir, object_database):
         oaho_scene.createCameraTrackingConstraint()
         materials = oaho_scene.defineMaterials()
 
-        bpy.ops.mesh.primitive_cube_add(radius=5, location=(0,0,5))
-        room_box = bpy.context.active_object
-        room_box.name = 'room_box'
-        room_box.data.materials.clear()
-        room_box.data.materials.append(materials['background'])
+        oaho_scene.createScene(materials)
+
+        bpy.ops.mesh.primitive_plane_add(radius=5, location=(0,0,0))
+        room_floor = bpy.context.active_object
+        room_floor.name = 'room_floor'
+        room_floor.data.materials.clear()
+        room_floor.data.materials.append(materials['background'])
+
         oaho_scene.setMaterial(materials)
         
         file_name = os.path.splitext(os.path.basename(mhx_path))[0]
@@ -264,8 +272,13 @@ def generate_oaho(data_dir, mhx_dir, pose_dir, object_database):
         print(mesh_name)
         out_dir = os.path.join(data_dir, file_name)
         
+        distractor_dir = '/home/robotics/work/datasets/random_urdfs'
+        distractor_objects = glob(os.path.join(distractor_dir, '**/*.obj'), recursive=True)
+        distractor_objects = [o for o in distractor_objects if '_coll' not in o]
+        oaho_scene.randomizeScene(distractor_objects)
+
         # , arm_interpolation_steps, hand_interpolation_steps, n_jitter)
-        generate_oaho_(mesh_name, out_dir, pose_dir, object_database)
+        generate_oaho_(mesh_name, out_dir, pose_dir, object_database, distractor_objects)
         #generate_(mesh_name, out_dir, pose_dir, arm_interpolation_steps, hand_interpolation_steps, n_jitter)
 
     # out_dir = os.path.join(data_dir, 'generic')

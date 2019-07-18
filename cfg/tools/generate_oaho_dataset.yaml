@@ -9,7 +9,7 @@ gripper: yumi_metal_spline
 target_objects:
   # 3dnet: all
   3dnet: all
-  # kit: all
+  kit: all
     # - 114509277e76e413c8724d5673a063a6
     # - 13090507b6e3066bbdd3587db9f9bf29
     # - 1072f1d1b9531da95833b7f8c91b5b48
@@ -121,6 +121,10 @@ tensors:
     #   dtype: uint32
     # image_labels:
     #   dtype: uint32
+
+export:
+  split_mode: 'image'
+  grasp_type: 'grasp_configurations'
 
 # Debugging params
 vis:

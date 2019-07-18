@@ -43,7 +43,6 @@ def getPoseQuat(bone_names):
         bone.rotation_mode = 'QUATERNION'
         for row in range(4):
             state[row, idx] = bone.rotation_quaternion[row]
-
     return state
 
 
@@ -63,6 +62,13 @@ def setPoseQuat(bone_names, state):
         for row in range(4):
             bone.rotation_quaternion[row] = state[row, idx]
 
+
+def setBodyPoseQuat(state):
+    bones = set([b.name for b in bpy.data.objects['Hum2'].pose.bones])
+    arm = set(ARM_BONE_NAMES)
+    hand = set(HAND_BONE_NAMES)
+    body = bones.difference(arm).difference(hand)
+    setPoseQuat(body, state)
 
 def setArmPoseQuat(state):
     setPoseQuat(ARM_BONE_NAMES, state)
@@ -149,17 +155,85 @@ def defineMaterials():
     return { 'skin': skin_material, 'hand': hand_material, 'object': object_material, 'background': background_material }
 
 
+def randomizeScene(obj_paths, n=5):
+    if 'distractor_group' not in bpy.data.groups:
+        bpy.data.groups.new('distractor_group')
+    distractor_group = bpy.data.groups['distractor_group']
+    for o in distractor_group.objects:
+        remove_object(o)
+    distractors = np.random.choice(obj_paths, n)
+    for dist in distractors:
+        # print('loading', dist)
+        objects_before = set(bpy.data.objects[:])
+        bpy.ops.import_scene.obj(filepath=dist, global_clamp_size=4)
+        print( set(bpy.data.objects[:]) - objects_before)
+        obj = bpy.context.selected_objects[0]
+        obj.location.y = -10
+        obj.data.materials.clear()
+        obj.data.materials.append(bpy.data.materials['Background'])
+        distractor_group.objects.link(obj)
+    room_box = bpy.data.objects['room_box']
+    if room_box:
+        room_box.modifiers['distractor_particles'].particle_system.seed = random.randint(0,99999)
+
+
+
+def createScene(materials):
+
+    bpy.ops.mesh.primitive_cube_add(radius=5, location=(0,0,0))
+    room_box = bpy.context.active_object
+    room_box.name = 'room_box'
+    room_box.data.materials.clear()
+    room_box.data.materials.append(materials['background'])
+
+    bpy.ops.object.mode_set(mode='EDIT')
+    room_box_edit_object = bpy.context.edit_object
+    bm = bmesh.from_edit_mesh(room_box_edit_object.data)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges, use_grid_fill=True, cuts=7)
+    room_box_edit_object.data.update()
+    bpy.ops.object.mode_set(mode='OBJECT') 
+
+    displacement_texture = bpy.data.textures.new('random_displacement', 'DISTORTED_NOISE')
+    displacement_texture.noise_scale = 1.5
+    displacement_texture.distortion = 3.5
+
+    displacement_modifier = room_box.modifiers.new('Displace', 'DISPLACE')
+    displacement_modifier.texture = displacement_texture
+    displacement_modifier.strength = 3.0
+
+
+    room_box.modifiers.new('sub_surf', 'SUBSURF')
+
+    if 'distractor_group' not in bpy.data.groups:
+        bpy.data.groups.new('distractor_group')
+    distractor_group = bpy.data.groups['distractor_group']
+
+    room_box.modifiers.new("distractor_particles", type='PARTICLE_SYSTEM')
+    distractor_particles = room_box.modifiers["distractor_particles"].particle_system
+    distractor_particles.settings.type = 'HAIR'
+    distractor_particles.settings.use_advanced_hair = True
+    distractor_particles.settings.count = 200
+    distractor_particles.settings.use_rotations = True
+    # distractor_particles.settings.rotation_mode = 'NORMAL'
+    # distractor_particles.settings.rotation_factor_random = 0.47
+    distractor_particles.settings.render_type = 'GROUP'
+    distractor_particles.settings.dupli_group = distractor_group
+    distractor_particles.settings.use_scale_dupli = False
+
+
+
+
 def positionCamera():
     camera = bpy.data.objects[CAMERA]
     # camera.location = (0.0, -2.0, 1.2) + 0.1*(2*np.random.random(3)-1.0)
-    camera.location.x = np.random.uniform(-0.1, 0.1)
-    camera.location.y = np.random.uniform(-0.8, -0.6)#np.random.uniform(-2.1, -1.9)
-    camera.location.z = np.random.uniform(1.1, 1.3)
+    camera.location.x = np.random.uniform(-0.3, 0.1)
+    camera.location.y = np.random.uniform(-1.4, -0.6)#np.random.uniform(-2.1, -1.9)
+    camera.location.z = np.random.uniform(1.1, 1.4)
     camera.rotation_mode = 'XYZ'
     # camera.rotation_euler = np.array([1.57, 0, 0]) + 1.8*(2*np.random.random(3)-1.0)
-    camera.rotation_euler.x = np.random.uniform(0.0, np.pi)
-    camera.rotation_euler.y = np.random.uniform(0.0, np.pi)
-    camera.rotation_euler.z = np.random.uniform(0.0, np.pi)
+    camera.rotation_euler.x = np.random.uniform(0.0, 2*np.pi)
+    camera.rotation_euler.y = np.random.uniform(0.0, 2*np.pi)
+    camera.rotation_euler.z = np.random.uniform(0.0, 2*np.pi)
     # camera.keyframe_insert(data_path='location', frame=10.0)
     # camera.location.x = 10.0
     # camera.location.y = 0.0
@@ -175,13 +249,25 @@ def createCameraTrackingConstraint():
     CAMERA_CONSTRAINT = 'DAMPED_TRACK'
     # CAMERA_CONSTRAINT = 'TRACK_TO'
     camera_hand_tracking = camera.constraints.new(CAMERA_CONSTRAINT)
-    camera_hand_tracking.target = bpy.data.objects['Hum2'] # camera_hand_tracking.target = bpy.data.objects['Hum2:Body']
-    camera_hand_tracking.subtarget = RIG_SPECIFIC_PREFIX + 'hand.R'
+    if True:
+        camera_hand_tracking.target = bpy.data.objects['Hum2:Body']
+        camera_hand_tracking.subtarget = 'palm_middle.R'
+    else:
+        camera_hand_tracking.target = bpy.data.objects['Hum2']
+        camera_hand_tracking.subtarget = RIG_SPECIFIC_PREFIX + 'hand.R'
     camera_hand_tracking.track_axis = 'TRACK_NEGATIVE_Z'
     if CAMERA_CONSTRAINT == 'TRACK_TO':
         camera_hand_tracking.use_target_z = False  # for TRACK_TO
         camera_hand_tracking.up_axis = 'UP_Y'  # for TRACK_TO
     camera_hand_tracking.influence = 0.925
+
+    camera_hand_min_distance = camera.constraints.new('LIMIT_DISTANCE')
+    camera_hand_min_distance.target = bpy.data.objects['Hum2:Body']
+    camera_hand_min_distance.subtarget = 'palm_middle.R'
+    camera_hand_min_distance.distance = 0.25
+    camera_hand_min_distance.limit_mode = 'LIMITDIST_OUTSIDE'
+
+
 
 
 def setupRenderingNodes(base_output_dir=''):
@@ -243,6 +329,20 @@ def setupRenderingNodes(base_output_dir=''):
               node_output_file.inputs['segmentation'])
     links.new(node_render_layer.outputs['Z'], node_output_file.inputs['depth'])
 
+
+def writeBodyPoseQuat(pose_dir):
+    if not os.path.exists(pose_dir):
+        os.makedirs(pose_dir)
+
+    bones = set([b.name for b in bpy.data.objects['Hum2'].pose.bones])
+    arm = set(ARM_BONE_NAMES)
+    hand = set(HAND_BONE_NAMES)
+    body = bones.difference(arm).difference(hand)
+    pose = getPoseQuat(body)
+    ts = getTs()
+    out_path = os.path.join(pose_dir, 'body_pose_%s.csv' % ts)
+
+    np.savetxt(out_path, pose, delimiter=',')
 
 def writeArmPoseQuat(pose_dir):
     if not os.path.exists(pose_dir):

@@ -220,7 +220,7 @@ def generate_oaho_dataset(dataset_path,
     coll_check_params = config['collision_checking']
     approach_dist = coll_check_params['approach_dist']
     delta_approach = coll_check_params['delta_approach']
-    table_offset = coll_check_params['table_offset']
+    # table_offset = coll_check_params['table_offset']
 
     table_mesh_filename = coll_check_params['table_mesh_filename']
     if not os.path.isabs(table_mesh_filename):
@@ -228,21 +228,21 @@ def generate_oaho_dataset(dataset_path,
     table_mesh = ObjFile(table_mesh_filename).read()
     
     # set tensor dataset config
-    tensor_config = config['tensors']
-    tensor_config['fields']['depth_images']['height'] = im_final_height
-    tensor_config['fields']['depth_images']['width'] = im_final_width
-    tensor_config['fields']['segmentation_images']['height'] = im_final_height
-    tensor_config['fields']['segmentation_images']['width'] = im_final_width
+    # tensor_config = config['tensors']
+    # tensor_config['fields']['depth_images']['height'] = im_final_height
+    # tensor_config['fields']['depth_images']['width'] = im_final_width
+    # tensor_config['fields']['segmentation_images']['height'] = im_final_height
+    # tensor_config['fields']['segmentation_images']['width'] = im_final_width
 
-    tensor_config['fields']['quality_maps']['height'] = im_final_height
-    tensor_config['fields']['quality_maps']['width'] = im_final_width
+    # tensor_config['fields']['quality_maps']['height'] = im_final_height
+    # tensor_config['fields']['quality_maps']['width'] = im_final_width
 
-    tensor_config['fields']['angle_cos_maps']['height'] = im_final_height
-    tensor_config['fields']['angle_cos_maps']['width'] = im_final_width
-    tensor_config['fields']['angle_sin_maps']['height'] = im_final_height
-    tensor_config['fields']['angle_sin_maps']['width'] = im_final_width
-    tensor_config['fields']['width_maps']['height'] = im_final_height
-    tensor_config['fields']['width_maps']['width'] = im_final_width
+    # tensor_config['fields']['angle_cos_maps']['height'] = im_final_height
+    # tensor_config['fields']['angle_cos_maps']['width'] = im_final_width
+    # tensor_config['fields']['angle_sin_maps']['height'] = im_final_height
+    # tensor_config['fields']['angle_sin_maps']['width'] = im_final_width
+    # tensor_config['fields']['width_maps']['height'] = im_final_height
+    # tensor_config['fields']['width_maps']['width'] = im_final_width
 
     # add available metrics (assuming same are computed for all objects)
     metric_names = []
@@ -260,23 +260,14 @@ def generate_oaho_dataset(dataset_path,
     #     tensor_config['fields'][metric_name]['dtype'] = 'float32'
 
     # init tensor dataset
-    tensor_dataset = TensorDataset(output_dir, tensor_config)
-    tensor_datapoint = tensor_dataset.datapoint_template
+    # tensor_dataset = TensorDataset(output_dir, tensor_config)
+    # tensor_datapoint = tensor_dataset.datapoint_template
 
     # init tf record writer
 
     
-    tf_record_filename = os.path.join(output_dir, 'oaho_synth.tfrecord')
-    tf_train_record_filename = os.path.join(output_dir, 'oaho_synth_train.tfrecord')
-    tf_val_record_filename = os.path.join(output_dir, 'oaho_synth_val.tfrecord')
-    tf_test_record_filename = os.path.join(output_dir, 'oaho_synth_test.tfrecord')
-
-    tf_train_record_writer = tf.python_io.TFRecordWriter(tf_train_record_filename)
-    tf_val_record_writer = tf.python_io.TFRecordWriter(tf_val_record_filename)
-    tf_test_record_writer = tf.python_io.TFRecordWriter(tf_test_record_filename)
-
-    tf_record_writers = [ tf_train_record_writer, tf_val_record_writer, tf_test_record_writer ]
-
+    tf_record_filenames = [os.path.join(output_dir, 'oaho_synt{}.tfrecord'.format(suffix)) for suffix in ['_train', '_val', '_test']]
+    tf_record_writers = [tf.python_io.TFRecordWriter(fn) for fn in tf_record_filenames]
     
 
     # setup log file
@@ -301,9 +292,12 @@ def generate_oaho_dataset(dataset_path,
 
     tvt_target = [0.8, 0.1, 0.1]
     tvt_choice = np.random.choice([0, 1, 2], 1000, p=tvt_target)
-    record_index = 0
+    tvt_record_index = 0
     # create grasps dict
     candidate_grasps_dict = {}
+
+    # config['export']['split_mode'] = 'image'
+    # config['export']['grasp_type'] = 'grasp_configurations'
     
     # loop through datasets and objects
     for dataset in datasets:
@@ -319,6 +313,8 @@ def generate_oaho_dataset(dataset_path,
             collision_checker = GraspCollisionChecker(gripper, view=config['vis']['collision_checking'])
             collision_checker.set_graspable_object(obj)
             
+            if config['export']['split_mode'] == 'object':
+                tvt_record_index = tvt_record_index + 1
             
             # read in the hand_object configurations for the mesh
             hand_object_poses = dataset.hand_object_poses(obj.key)
@@ -338,10 +334,19 @@ def generate_oaho_dataset(dataset_path,
                     hof.write(hand_object_pose.hand_mesh)
                 
                 # setup hand in collision checker
-                T_obj_hand = hand_object_pose.T_hand_obj.inverse()
+                try:
+                    T_obj_hand = hand_object_pose.T_hand_obj.inverse()
+                except ValueError as err:
+                    # print(err)
+                    logging.info('Unable to invert hand_obj pose matrix for {} {}; skip it'.format(obj.key, hand_object_pose.id))
+                    continue
                 collision_checker.set_table(hand_obj_filename, T_obj_hand)
 
                 for image_id, rendered_image in hand_object_pose.rendered_images.iteritems():
+
+                    image_id_stamped = image_id
+                    if IMAGE_TIMESTAMP_KEY in rendered_image.attrs:
+                        image_id_stamped = image_id_stamped + '_' + rendered_image.attrs[IMAGE_TIMESTAMP_KEY]
 
                     segmentation_im = ColorImage(np.array(rendered_image[IMAGE_SEGMENTATION_KEY]))
                     depth_im = DepthImage(np.array(rendered_image[IMAGE_DEPTH_KEY]))
@@ -349,7 +354,7 @@ def generate_oaho_dataset(dataset_path,
                     fx, fy, cx, cy = rendered_image.attrs[CAM_INTRINSICS_KEY]
                     camera_intr = CameraIntrinsics('camera', fx=fx, fy=fy, cx=cx, cy=cy, skew=0.0, height=depth_im.height, width=depth_im.width)
 
-                    candidate_grasps_dict[obj.key][hand_object_pose.id][image_id] = []
+                    candidate_grasps_dict[obj.key][hand_object_pose.id][image_id_stamped] = []
 
                     T_approach = RigidTransform(rotation=rendered_image.attrs[CAM_ROT_KEY].dot(RigidTransform.rotation_from_axis_angle(np.array([np.pi, 0, 0]))),
                                                         translation=rendered_image.attrs[CAM_POS_KEY],
@@ -382,7 +387,7 @@ def generate_oaho_dataset(dataset_path,
 
                     candidate_grasps = []
                     # check grasp validity
-                    logging.info('Checking collisions for %d grasps for object %s in hand_pose %s for image %s' %(len(aligned_perpendicular_grasps), obj.key, hand_object_pose.id, image_id))
+                    logging.info('Checking collisions for %d grasps for object %s in hand_pose %s for image %s' %(len(aligned_perpendicular_grasps), obj.key, hand_object_pose.id, image_id_stamped))
                     for aligned_grasp in aligned_perpendicular_grasps:
 
                         # check whether any valid approach directions are collision free
@@ -405,7 +410,7 @@ def generate_oaho_dataset(dataset_path,
                                 vis.gripper_on_object(gripper, aligned_grasp, obj, hand_object_pose.T_hand_obj)
                                 vis.show()
                     
-                    candidate_grasps_dict[obj.key][hand_object_pose.id][image_id] = candidate_grasps
+                    candidate_grasps_dict[obj.key][hand_object_pose.id][image_id_stamped] = candidate_grasps
 
                     T_obj_camera = T_approach.inverse()
                     collision_free_projected_grasps = [gi.grasp.project_camera(T_obj_camera, camera_intr) for gi in candidate_grasps if gi.collision_free]
@@ -418,21 +423,25 @@ def generate_oaho_dataset(dataset_path,
                     q_map = np.zeros(depth_im.shape)
                     a_map = np.zeros(depth_im.shape)
                     w_map = np.zeros(depth_im.shape)
+
+                    grasp_configurations = []
                     for grasp_2d in collision_free_projected_grasps:
                         # print(grasp_2d.center.x)
                         # print(grasp_2d.center.y)
                         # print(grasp_2d.angle)
                         # print(grasp_2d.width_px)
-                        
-                        bb = grasp_2d.bounding_box_edges()
+                        wrapped_grasp_angle = np.fmod(grasp_2d.angle + 0.5*np.pi, np.pi) - 0.5*np.pi
+                        bb = grasp_2d.bounding_box_edges(grasp_2d.width_px/3.0)
                         rr, cc = polygon(bb[1,:], bb[0,:], depth_im.shape)
                         q_map[rr, cc] = 1
-                        a_map[rr, cc] = np.fmod(grasp_2d.angle + 2*np.pi , np.pi)
+                        a_map[rr, cc] = wrapped_grasp_angle
                         w_map[rr, cc] = grasp_2d.width_px
                         # print('-- angle rad: {}  deg: {}'.format(grasp_2d.angle, np.rad2deg(grasp_2d.angle)))
                         # a = np.fmod(grasp_2d.angle + 2*np.pi , np.pi)
                         # print('   wrap  rad: {}  deg: {}'.format(a, np.rad2deg(a)))
                         # print('   map  2sin: {} 2cos: {}'.format(np.sin(2*a), np.cos(2*a)))
+                        grasp_configurations.append((grasp_2d.center.x, grasp_2d.center.y, wrapped_grasp_angle, grasp_2d.width_px))
+
 
                     a_cos_map = np.cos(2*a_map)
                     a_sin_map = np.sin(2*a_map) 
@@ -465,46 +474,63 @@ def generate_oaho_dataset(dataset_path,
                     segmentation_map = np.eye(4)[segmentation_classes]
 
                         # store to data buffers
-                    tensor_datapoint['depth_images'] = depth_im.raw_data
-                    tensor_datapoint['segmentation_images'] = segmentation_map
-                    tensor_datapoint['quality_maps'] = q_map
-                    # tensor_datapoint['angle_maps'] = a_map
-                    tensor_datapoint['angle_sin_maps'] = a_sin_map
-                    tensor_datapoint['angle_cos_maps'] = a_cos_map
-                    tensor_datapoint['width_maps'] = w_map
-                    tensor_datapoint['camera_poses'] = T_approach.vec
-                    tensor_datapoint['camera_intrs'] = camera_intr.vec[:4]
-                    # tensor_datapoint['pose_labels'] = cur_pose_label
-                    # tensor_datapoint['image_labels'] = cur_image_label
+                    # tensor_datapoint['depth_images'] = depth_im.raw_data
+                    # tensor_datapoint['segmentation_images'] = segmentation_map
+                    # tensor_datapoint['quality_maps'] = q_map
+                    # # tensor_datapoint['angle_maps'] = a_map
+                    # tensor_datapoint['angle_sin_maps'] = a_sin_map
+                    # tensor_datapoint['angle_cos_maps'] = a_cos_map
+                    # tensor_datapoint['width_maps'] = w_map
+                    # tensor_datapoint['camera_poses'] = T_approach.vec
+                    # tensor_datapoint['camera_intrs'] = camera_intr.vec[:4]
+                    # # tensor_datapoint['pose_labels'] = cur_pose_label
+                    # # tensor_datapoint['image_labels'] = cur_image_label
 
                     # for metric_name, metric_val in grasp_metrics[grasp.id].iteritems():
                     #     coll_free_metric = (1 * collision_free) * metric_val
                     #     tensor_datapoint[metric_name] = coll_free_metric
-                    tensor_dataset.add(tensor_datapoint)
+                    # tensor_dataset.add(tensor_datapoint)
 
-                    
+                    tf_example_id = '{}_{}_{}'.format(obj.key, hand_object_pose.id, image_id_stamped)
 
-                    tf_example = tf.train.Example(features=tf.train.Features(feature={
-                        'scene/depth': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(depth_im.raw_data, -1))),
-                        'scene/segmentation': tf.train.Feature(int64_list=tf.train.Int64List(value=np.reshape(segmentation_classes, -1))),
-                        'scene/quality': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(q_map, -1))),
-                        'scene/angle_sin': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(a_sin_map, -1))),
-                        'scene/angle_cos': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(a_cos_map, -1))),
-                        'scene/gripper_width': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(w_map, -1))),
-                        'scene/width': tf.train.Feature(int64_list=tf.train.Int64List(value=[im_final_width])),
-                        'scene/height': tf.train.Feature(int64_list=tf.train.Int64List(value=[im_final_height]))
-                    }))
+                    if config['export']['grasp_type'] == 'grasp_images':
+                        tf_example = tf.train.Example(features=tf.train.Features(feature={
+                            'id': tf.train.Feature(bytes_list=tf.train.BytesList(value=[tf_example_id])),
+                            'depth': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(depth_im.raw_data, -1))),
+                            'segmentation': tf.train.Feature(int64_list=tf.train.Int64List(value=np.reshape(segmentation_classes, -1))),
+                            'quality': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(q_map, -1))),
+                            'angle_sin': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(a_sin_map, -1))),
+                            'angle_cos': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(a_cos_map, -1))),
+                            'gripper_width': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(w_map, -1))),
+                            'width': tf.train.Feature(int64_list=tf.train.Int64List(value=[im_final_width])),
+                            'height': tf.train.Feature(int64_list=tf.train.Int64List(value=[im_final_height]))
+                        }))
+                    elif config['export']['grasp_type'] == 'grasp_configurations':
+                        grasp_configurations_flat = np.reshape(np.array(grasp_configurations), -1)
+                        tf_example = tf.train.Example(features=tf.train.Features(feature={
+                            'id': tf.train.Feature(bytes_list=tf.train.BytesList(value=[tf_example_id])),
+                            'depth': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(depth_im.raw_data, -1))),
+                            'segmentation': tf.train.Feature(int64_list=tf.train.Int64List(value=np.reshape(segmentation_classes, -1))),
+                            'quality': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(q_map, -1))),
+                            'angle_sin': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(a_sin_map, -1))),
+                            'angle_cos': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(a_cos_map, -1))),
+                            'gripper_width': tf.train.Feature(float_list=tf.train.FloatList(value=np.reshape(w_map, -1))),
+                            'grasps': tf.train.Feature(float_list=tf.train.FloatList(value=grasp_configurations_flat)),
+                            # 'num_grasps': tf.train.Feature(int64_list=tf.train.Int64List(value=[len(grasp_configurations)])),
+                            'width': tf.train.Feature(int64_list=tf.train.Int64List(value=[im_final_width])),
+                            'height': tf.train.Feature(int64_list=tf.train.Int64List(value=[im_final_height]))
+                        }))
 
-                    record_index = record_index + 1
-
-                    tf_record_writer = tf_record_writers[ tvt_choice[ record_index % len(tvt_choice) ] ]
+                    if config['export']['split_mode'] == 'image':
+                        tvt_record_index = tvt_record_index + 1
+                    tf_record_writer = tf_record_writers[ tvt_choice[ tvt_record_index % len(tvt_choice) ] ]
 
                     tf_record_writer.write(tf_example.SerializeToString())
 
     [writer.close() for writer in tf_record_writers]
 
 
-    tensor_dataset.flush()
+    # tensor_dataset.flush()
     
     logging.info('done')
 
