@@ -187,8 +187,8 @@ def enumerate_hand_poses(scene, context):
     return items
 
 def get_arm_poses():
-    # hp = list(glob(os.path.join(pose_dir, 'arm_pose*csv')))
-    hp = list(glob(os.path.join(pose_dir, 'body_pose*csv')))
+    hp = list(glob(os.path.join(pose_dir, 'arm_pose*csv')))
+    # hp = list(glob(os.path.join(pose_dir, 'body_pose*csv')))
     hp = sorted(hp, key=os.path.basename)
     return hp
 
@@ -200,8 +200,8 @@ def enumerate_arm_poses(scene, context):
 def set_base_arm_pose(self, context):
     arm_poses = oaho_scene.loadPoses([self.base_arm_pose])
     if len(arm_poses) > 0:
-        # oaho_scene.setArmPoseQuat(arm_poses[0])   
-        oaho_scene.setBodyPoseQuat(arm_poses[0])   
+        oaho_scene.setArmPoseQuat(arm_poses[0])   
+        # oaho_scene.setBodyPoseQuat(arm_poses[0])   
 
 
 HandObjectConfiguration = namedtuple('HandObjectConfiguration', [
