@@ -407,7 +407,7 @@ class PyBulletGraspCollisionChecker(PyBulletCollisionChecker):
         T_collision_object_world : :obj:`autolab_core.RigidTransform`
             pose of collision object w.r.t. world
         """
-        self.set_object('table', filename, T_table_world)
+        self.set_object('table', filename, T_collision_object_world)
 
     def set_table(self, filename, T_table_world):
         """ Set the table geometry and position in the environment.
