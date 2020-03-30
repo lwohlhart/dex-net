@@ -435,7 +435,7 @@ if __name__ == '__main__':
 
     # parse args
     parser = argparse.ArgumentParser(description='Command line interface to Dex-Net')
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
 
     # open dex-net handle
     dexnet_cli = DexNet_cli()
