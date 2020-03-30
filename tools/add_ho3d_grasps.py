@@ -74,14 +74,13 @@ import datetime
 
 import cv2
 
-ho3d_path = '/media/robotics/Seagate\ Expansion\ Drive/lwohlhart/work/ho3d/'#'/home/robotics/work/ho3d/'
 import sys
-sys.path.append(ho3d_path)
+sys.path.append('/home/robotics/work/dex-net-new/ho3d')
 
-ycb_path = '/home/robotics/dataset/ycb_meshes_google/objects/'
-ycb_obj_path_template = ycb_path+'{}/google_512k/nontextured.obj'
-ycb_sdf_path_template = ycb_path+'{}/google_512k/nontextured.sdf'
-ycb_google_to_ycb_offset_alignment_template = ycb_path + '{}/align.txt'
+# ycb_path = '/home/robotics/dataset/ycb_meshes_google/objects/'
+# ycb_obj_path_template = ycb_path+'{}/google_512k/nontextured.obj'
+# ycb_sdf_path_template = ycb_path+'{}/google_512k/nontextured.sdf'
+# ycb_google_to_ycb_offset_alignment_template = ycb_path + '{}/align.txt'
 
 
 ycb_path = '/home/robotics/dataset/ycb_meshes/'
@@ -90,14 +89,15 @@ ycb_sdf_path_template = ycb_path+'{}/textured.sdf'
 
 
 # grasps_path = '/home/robotics/code/grasp-pointnet/dex-net/apps/generated_grasps'
-grasps_path = '/home/robotics/code/grasp-pointnet/dex-net/apps/generated_grasps/good_grasps'
+# grasps_path = '/home/robotics/dataset/ycb_grasps'
+grasps_path = '/home/robotics/dataset/ycb_grasps_robotiq85_final'
 
 
 grasps_files = os.listdir(grasps_path)
 
-import vis_HO3D as ho3d
+# import vis_HO3D as ho3d
 
-ho3d.baseDir = ho3d_path
+import utils.vis_utils as ho3d_utils
 
 mean_depth_list = []
 mean_depth_clip2_list = []
@@ -106,19 +106,23 @@ segmentation_class_distribution_list = []
 
 if __name__ == '__main__':
 
-    dataset_path = os.path.abspath('./data/ho3d_database_.hdf5')
+    # dataset_path = os.path.abspath('./data/temp_ho3d_database.hdf5')
+    ho3d_path = '/media/robotics/Seagate Expansion Drive/lwohlhart_datasets/HO3D_v2/'
+    dataset_path = '/media/robotics/Seagate Expansion Drive/lwohlhart_datasets/ho3d_v2_database.hdf5'
+
     database = Hdf5Database(dataset_path, access_level=READ_WRITE_ACCESS)
 
     ho3d_dataset = database.create_dataset('ho3d')
 
-    sequences = os.listdir(os.path.join(ho3d_path, 'sequences'))
+    split = 'train'
+    sequences = os.listdir(os.path.join(ho3d_path, split))
     object_ids = []
     for sequence in sequences:
-
-        sequence_path = os.path.join(ho3d_path, 'sequences', sequence)
-        anno_sequence = ho3d.parseAnnoTxt(os.path.join(sequence_path, 'anno.txt'))
-        object_ids.append(next(anno_sequence.itervalues())['objID'])
+        seq_ids = [os.path.splitext(i)[0] for i in os.listdir(os.path.join(ho3d_path, split, sequence, 'rgb'))]
+        anno = ho3d_utils.read_annotation(ho3d_path, sequence, seq_ids[0], split)
+        object_ids.append(anno['objName'])
     
+    print ('objects in dataset', object_ids)
     for obj_id in set(object_ids): # ['025_mug', '019_pitcher_base']: #
 
         if obj_id not in ho3d_dataset.object_keys:
@@ -134,16 +138,31 @@ if __name__ == '__main__':
         
         db_object = ho3d_dataset.object(obj_id)
 
-        object_grasp_files = [f for f in grasps_files if obj_id in f and 'pickle' in f]
+        object_grasp_files = [f for f in grasps_files if obj_id in f and '_2.pickle' in f]
         if len(object_grasp_files) == 0:
+            logging.warn('found {} grasps pickle files for {}'.format(len(object_grasp_files), obj_id))
             continue
         # grasps_array = np.load(os.path.join(grasps_path, object_grasp_files[0]))
         with open(os.path.join(grasps_path, object_grasp_files[0]), 'rb') as f:
             object_grasps = pkl.load(f)
 
-        mesh_offset = np.zeros((3))        
-        mesh_offset = np.loadtxt(ycb_google_to_ycb_offset_alignment_template.format(obj_id), delimiter=' ')
+        mesh_offset = np.zeros((3))
+        # only for grasps generated with ycb_meshes_google objects, because they are not aligned like standard ycb meshes
+        # mesh_offset = np.loadtxt(ycb_google_to_ycb_offset_alignment_template.format(obj_id), delimiter=' ')
 
+        object_grasps_np = np.array(object_grasps)
+        friction_coefficients = sorted(list(set(object_grasps_np[:,1])))
+
+        x = (- object_grasps_np[:,1]).astype(np.float64)
+        probabilities = np.exp(x)/np.sum(np.exp(x))
+
+        selected_grasps_indices = np.random.choice(np.arange(0,object_grasps_np.shape[0]), size=2000, p=probabilities)
+        selected_grasps = object_grasps_np[selected_grasps_indices]
+        h = np.histogram(selected_grasps[:,1],bins=friction_coefficients)
+        print(h)
+
+
+        # good_grasps = object_grasps_np[object_grasps_np[:,1] < 0.5]
 
         good_grasps = list(object_grasps)
         good_grasps.sort(key=lambda x: np.linalg.norm(x[1:]))
@@ -165,6 +184,7 @@ if __name__ == '__main__':
                 grasp_dissimilarity[j,i] = grasp_dissimilarity[i,j] = dissim
                 
 
+        # TODO FIX there's a mistake in the quality assessment ->    grasps[:,1] = friction_coefficient; grasps[:,2] = canny_score
         grasp_quality = - np.linalg.norm(good_grasps[:,1:].astype(np.float), axis=1)
         # temp_grasp_dissimilarity = grasp_dissimilarity.copy()
         sampled_mask = np.zeros(n_grasps)
@@ -175,7 +195,7 @@ if __name__ == '__main__':
             grasp_selection_probability = grasp_uniqueness + grasp_quality
 
             index = np.argmax(grasp_selection_probability)
-            print(index, grasp_selection_probability[index], grasp_dissimilarity[index, sampled_grasps])
+            #print(index, grasp_selection_probability[index], grasp_dissimilarity[index, sampled_grasps])
             sampled_grasps.append(index)
             sampled_mask[index] = 1
             grasp_quality[index] = -100000

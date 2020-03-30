@@ -58,7 +58,7 @@ from dexnet.visualization.visualizer2d import Visualizer2D as vis2d
 from meshpy import ObjFile, RenderMode, SceneObject, UniformPlanarWorksurfaceImageRandomVariable
 from perception import CameraIntrinsics, BinaryImage, DepthImage, ColorImage, GrayscaleImage
 
-from dexnet.constants import WRITE_ACCESS, READ_ONLY_ACCESS, OBJ_EXT
+from dexnet.constants import READ_WRITE_ACCESS, WRITE_ACCESS, READ_ONLY_ACCESS, OBJ_EXT
 from dexnet.database import Hdf5Database
 from dexnet.grasping import GraspCollisionChecker, RobotGripper
 from dexnet.learning import TensorDataset
@@ -73,13 +73,12 @@ import datetime
 
 import cv2
 
-ho3d_path = '/home/robotics/work/ho3d/'
 import sys
-sys.path.append(ho3d_path)
+sys.path.append('/home/robotics/work/dex-net-new/ho3d')
 
-ycb_path = '/home/robotics/dataset/ycb_meshes_google/objects/'
-ycb_obj_path_template = ycb_path+'{}/google_512k/nontextured.obj'
-ycb_sdf_path_template = ycb_path+'{}/google_512k/nontextured.sdf'
+# ycb_path = '/home/robotics/dataset/ycb_meshes_google/objects/'
+# ycb_obj_path_template = ycb_path+'{}/google_512k/nontextured.obj'
+# ycb_sdf_path_template = ycb_path+'{}/google_512k/nontextured.sdf'
 
 
 ycb_path = '/home/robotics/dataset/ycb_meshes/'
@@ -87,9 +86,31 @@ ycb_obj_path_template = ycb_path+'{}/textured.obj'
 ycb_sdf_path_template = ycb_path+'{}/textured.sdf'
 
 
-import vis_HO3D as ho3d
+import utils.vis_utils as ho3d_utils
+import vis_HO3D
+from mano.webuser.smpl_handpca_wrapper_HAND_only import load_model
 
-ho3d.baseDir = ho3d_path
+mano_model = load_model(vis_HO3D.MANO_MODEL_PATH, ncomps=6, flat_hand_mean=True)
+
+def forwardKinematics(fullpose, trans, beta):
+    '''
+    MANO parameters --> 3D pts, mesh
+    :param fullpose:
+    :param trans:
+    :param beta:
+    :return: 3D pts of size (21,3)
+    '''
+
+    assert fullpose.shape == (48,)
+    assert trans.shape == (3,)
+    assert beta.shape == (10,)
+
+    
+    mano_model.fullpose[:] = fullpose
+    mano_model.trans[:] = trans
+    mano_model.betas[:] = beta
+
+    return mano_model.J_transformed.r, mano_model
 
 mean_depth_list = []
 mean_depth_clip2_list = []
@@ -98,18 +119,20 @@ segmentation_class_distribution_list = []
 
 if __name__ == '__main__':
 
-    dataset_path = os.path.abspath('./data/ho3d_database.hdf5')
-    database = Hdf5Database(dataset_path, access_level=WRITE_ACCESS)
+    ho3d_path = '/media/robotics/Seagate Expansion Drive/lwohlhart_datasets/HO3D_v2/'
+    dataset_path = '/media/robotics/Seagate Expansion Drive/lwohlhart_datasets/ho3d_v2_database.hdf5'
+
+    database = Hdf5Database(dataset_path, access_level=READ_WRITE_ACCESS)
 
     ho3d_dataset = database.create_dataset('ho3d')
-
-    sequences = os.listdir(os.path.join(ho3d_path, 'sequences'))
-    for sequence in sequences:
+    split = 'train'
+    sequences = os.listdir(os.path.join(ho3d_path, split))
+    total_num_sequences = len(sequences)
+    for sequence_index, sequence in enumerate(sequences):
         logging.info('Opening sequence : {}'.format(sequence))
-        sequence_path = os.path.join(ho3d_path, 'sequences', sequence)
-        anno_sequence = ho3d.parseAnnoTxt(os.path.join(sequence_path, 'anno.txt'))
-        obj_id = next(anno_sequence.itervalues())['objID']
-        
+        seq_ids = [os.path.splitext(i)[0] for i in os.listdir(os.path.join(ho3d_path, split, sequence, 'rgb'))]
+        anno = ho3d_utils.read_annotation(ho3d_path, sequence, seq_ids[0], split)
+        obj_id = anno['objName']
         logging.info('Processing object : {}'.format(obj_id))
 
         if obj_id not in ho3d_dataset.object_keys:
@@ -129,22 +152,24 @@ if __name__ == '__main__':
             db_object.create_group(oaho_db.HAND_OBJECT_POSES_KEY)
         hand_object_poses = db_object[oaho_db.HAND_OBJECT_POSES_KEY]
 
-        for seq_id, anno in anno_sequence.iteritems():
+        for seq_id in seq_ids:
+            anno = ho3d_utils.read_annotation(ho3d_path, sequence, seq_id, split)
             now = datetime.datetime.now()
             ts = '%04d%02d%02d%02d%02d%02d' % (now.year, now.month, now.day,now.hour, now.minute, now.second)
 
-            hand_file = os.path.join(sequence_path,'hand/{}.obj'.format(seq_id))
-            depth_file = os.path.join(sequence_path,'depth/{}.png'.format(seq_id))
-            segmentation_file = os.path.join(sequence_path,'segr/{}.jpg'.format(seq_id))
+            segmentation_file = os.path.join(ho3d_path, split, sequence, 'seg', '{}.jpg'.format(seq_id))
 
             pose_name = 'seq_{}_pose_{}'.format(sequence, seq_id)
 
             if pose_name not in hand_object_poses.keys():
                 hand_object_poses.create_group(pose_name)
+            elif True: # TODO actually if skip existing
+                logging.info('skipping seq: ({}/{}) {} id: {}  since it already exists'.format(sequence_index, total_num_sequences, sequence, seq_id))
+                continue
                 
             pose = hand_object_poses[pose_name]
-
-            hand_mesh = obj_file.ObjFile(hand_file).read()
+            
+            hand_joints, hand_mesh = forwardKinematics(anno['handPose'], np.zeros(3), anno['handBeta'])
 
             if oaho_db.HAND_OBJECT_POSE_HAND_MESH_KEY not in pose.keys():
                 pose.create_group(oaho_db.HAND_OBJECT_POSE_HAND_MESH_KEY)
@@ -164,16 +189,16 @@ if __name__ == '__main__':
             T_hand_obj = T_hand_cam.inverse() * T_obj_cam
             # T_hand_obj = T_obj_hand.inverse()
 
-            if oaho_db.HAND_OBJECT_POSE_ROT_KEY in pose.attrs.keys():
-                pose.attrs[oaho_db.HAND_OBJECT_POSE_ROT_KEY].clear()
+            # if oaho_db.HAND_OBJECT_POSE_PT_KEY in pose.attrs.keys():
+            #     pose.attrs[oaho_db.HAND_OBJECT_POSE_PT_KEY].clear()
             pose.attrs.create(oaho_db.HAND_OBJECT_POSE_PT_KEY, T_hand_obj.translation)
 
-            if oaho_db.HAND_OBJECT_POSE_ROT_KEY in pose.attrs.keys():
-                pose.attrs[oaho_db.HAND_OBJECT_POSE_ROT_KEY].clear()
+            # if oaho_db.HAND_OBJECT_POSE_ROT_KEY in pose.attrs.keys():
+            #     pose.attrs[oaho_db.HAND_OBJECT_POSE_ROT_KEY].clear()
             pose.attrs.create(oaho_db.HAND_OBJECT_POSE_ROT_KEY, T_hand_obj.rotation)
             
-            if oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY in pose.attrs.keys():
-                pose.attrs[oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY].clear()
+            # if oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY in pose.attrs.keys():
+            #     pose.attrs[oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY].clear()
             pose.attrs.create(oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY, anno['handPose'])  # TODO maybe it's anno['handJoints']
             # pose.attrs.create(oaho_db.HAND_OBJECT_POSE_HAND_POSE_KEY, oaho_scene.getHandPoseQuat())
             
@@ -181,8 +206,8 @@ if __name__ == '__main__':
             # hand_mesh_vertices = np.dot(T_obj_hand.matrix, np.transpose(hand_mesh_vertices_homogenous)).transpose()[:,:3]
             # hand_mesh_vertices = hand_mesh.vertices - hand_mesh.centroid
 
-            pose_hand_mesh.create_dataset(oaho_db.MESH_VERTICES_KEY, data=hand_mesh.vertices)
-            pose_hand_mesh.create_dataset(oaho_db.MESH_TRIANGLES_KEY, data=hand_mesh.triangles)
+            pose_hand_mesh.create_dataset(oaho_db.MESH_VERTICES_KEY, data=hand_mesh.r if hasattr(hand_mesh, 'r') else hand_mesh.v)
+            pose_hand_mesh.create_dataset(oaho_db.MESH_TRIANGLES_KEY, data=hand_mesh.f)
 
             if oaho_db.RENDERED_IMAGES_KEY not in pose.keys():
                 pose.create_group(oaho_db.RENDERED_IMAGES_KEY)
@@ -194,8 +219,10 @@ if __name__ == '__main__':
             image_id = '{}_{}'.format(oaho_db.IMAGE_KEY, len(list(rendered_images.keys())))
 
 
+            image_rgb = ho3d_utils.read_RGB_img(ho3d_path, sequence, seq_id, split)#cv2.imread(rgb_file)  # CHANGE for RGB
+            image_rgb = cv2.cvtColor(image_rgb, cv2.COLOR_BGR2RGB)
 
-            depth_map = ho3d.decodeDepthImg(depth_file)
+            depth_map = ho3d_utils.read_depth_img(ho3d_path, sequence, seq_id, split)#ho3d.decodeDepthImg(depth_file)
 
             # depth_map = cv2.copyMakeBorder(depth_map, 1, 1, 1,  1, cv2.BORDER_DEFAULT)
             depth_scale = np.abs(depth_map).max()             
@@ -213,7 +240,7 @@ if __name__ == '__main__':
             mean_depth_clip2_list.append(np.mean(np.clip(depth_map, 0.0, 2.0)))
             mean_depth_clip3_list.append(np.mean(np.clip(depth_map, 0.0, 3.0)))
 
-            segmentation_image = cv2.imread(segmentation_file)
+            segmentation_image = cv2.imread(segmentation_file) # TODO render hand + obj segmentation
             _, segmentation_image = cv2.threshold(segmentation_image, 100, 255, cv2.THRESH_BINARY)
             segmentation_image = cv2.cvtColor(segmentation_image, cv2.COLOR_BGR2RGB)            
             segmentation_image = cv2.resize(segmentation_image, None, fx=2, fy=2, interpolation=cv2.INTER_NEAREST)
@@ -227,6 +254,7 @@ if __name__ == '__main__':
             rendered_images.create_group(image_id)
             image_data = rendered_images[image_id]
 
+            image_data.create_dataset(oaho_db.IMAGE_DATA_KEY, data=image_rgb)
             image_data.create_dataset(oaho_db.IMAGE_DEPTH_KEY, data=depth_map)
             image_data.create_dataset(oaho_db.IMAGE_SEGMENTATION_KEY, data=segmentation_image)
             image_data.attrs.create(oaho_db.IMAGE_TIMESTAMP_KEY, np.string_(ts))
@@ -245,10 +273,9 @@ if __name__ == '__main__':
             np.savetxt(os.path.join('data', 'ho3d_class_distribution.txt'), np.mean(segmentation_class_distribution_list, axis=0),  fmt='%.4f')
 
 
-            logging.info('processed id: {}'.format(seq_id))
+            logging.info('processed seq: ({}/{}) {} id: {}'.format(sequence_index, total_num_sequences, sequence, seq_id))
 
         database.flush()
-        break
             
         
     database.flush()
