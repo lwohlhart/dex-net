@@ -79,6 +79,7 @@ HAND_OBJECT_POSE_HAND_MESH_KEY = 'hand_mesh'
 
 IMAGE_DEPTH_KEY = 'image_depth'
 IMAGE_SEGMENTATION_KEY = 'image_segmentation'
+IMAGE_TIMESTAMP_KEY = 'image_timestamp'
 
 NUM_GRASPS_KEY = 'num_grasps'
 GRASP_KEY = 'grasp'

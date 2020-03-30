@@ -22,7 +22,7 @@ HAND_OBJECT_POSE_HAND_MESH_KEY = 'hand_mesh'
 
 NUM_IMAGES_KEY = 'num_images'
 IMAGE_KEY = 'image'
-# IMAGE_DATA_KEY = 'image_data'
+IMAGE_DATA_KEY = 'image_data'
 IMAGE_TIMESTAMP_KEY = 'image_timestamp'
 IMAGE_DEPTH_KEY = 'image_depth'
 IMAGE_SEGMENTATION_KEY = 'image_segmentation'
