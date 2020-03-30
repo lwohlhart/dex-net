@@ -219,7 +219,7 @@ class ParallelJawPtGrasp3D(PointGrasp):
             distance between grasps g1 and g2
         """
         center_dist = np.linalg.norm(g1.center - g2.center)
-        axis_dist = (2.0 / np.pi) * np.arccos(np.abs(g1.axis.dot(g2.axis)))
+        axis_dist = (2.0 / np.pi) * np.arccos(min(np.abs(g1.axis.dot(g2.axis)), 1))
         return center_dist + alpha * axis_dist
 
     @staticmethod
